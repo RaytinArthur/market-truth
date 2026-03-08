@@ -1,15 +1,15 @@
 import argparse
 import sys
-from datetime import datetime
 
+from config import DEFAULT_TICKER, DEFAULT_DATE
 from retriever.context_builder import build_context
 from llm.analyst import analyze
 
 def main() -> int:
     # 使用argparse 支持命令行传参
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ticker", default="AAPL", help = "股票代码")
-    parser.add_argument("--date", default="2024-08-05", help="目标日期 YYYY-MM-DD")
+    parser.add_argument("--ticker", default=DEFAULT_TICKER, help = "股票代码")
+    parser.add_argument("--date", default=DEFAULT_DATE, help="目标日期 YYYY-MM-DD")
     args = parser.parse_args()
     
     # 1. 拼接上下文：股价 + 相关新闻

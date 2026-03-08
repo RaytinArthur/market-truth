@@ -3,32 +3,33 @@ import os
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
+from config import (
+    CHROMA_DB_PATH,
+    CHROMA_COLLECTION_NAME,
+    EMBEDDING_MODEL_NAME,
+    RAW_DATA_DIR,
+)
+
 def main():
     print("初始化本地Embedding模型(首次运行会下载约90MB的模型)")
-    ef = SentenceTransformerEmbeddingFunction(model_name = "all-MiniLM-L6-v2")
+    ef = SentenceTransformerEmbeddingFunction(model_name = EMBEDDING_MODEL_NAME)
 
     #确保保存数据库的目录存在
-    os.makedirs("./data/chroma", exist_ok=True)
+    os.makedirs(CHROMA_DB_PATH, exist_ok=True)
 
     print("链接本地ChromaDB...")
-    client = chromadb.PersistentClient(path="./data/chroma")
-    collection = client.get_or_create_collection(name = "news", embedding_function=ef)
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    collection = client.get_or_create_collection(name = CHROMA_COLLECTION_NAME, embedding_function=ef)
 
     news = []
 
-    #读取真实新闻
-    try:
-        with open("data/raw/news.json", "r", encoding='utf-8') as f:
-            news.extend(json.load(f))
-    except FileNotFoundError:
-        print("！警告！未找到news文件")
-
-    #读取保底mock新闻
-    try:
-        with open("data/raw/news_manual.json", "r", encoding='utf-8') as f:
-            news.extend(json.load(f))
-    except FileNotFoundError:
-        print("！警告！未找到new manual文件")
+    #读取真实新闻 和 保底新闻
+    for filename in ["news.json", "news_manual.json"]:
+        try:
+            with open(f"{RAW_DATA_DIR}/{filename}", "r", encoding="utf-8") as f:
+                news.extend(json.load(f))
+        except FileNotFoundError:
+            print(f"警告：未找到 {filename}")
 
     if not news:
         print("错误 没有新闻数据可供向量化，请确保前序步骤")

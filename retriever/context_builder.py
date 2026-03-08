@@ -1,3 +1,4 @@
+from config import TOP_K_NEWS
 from retriever.stock_retriever import get_stock_anomaly
 from retriever.vector_search import search_news
 
