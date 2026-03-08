@@ -1,10 +1,19 @@
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
+from config import (
+    EMBEDDING_MODEL_NAME,
+    CHROMA_DB_PATH,
+    CHROMA_COLLECTION_NAME
+)
+
 # 初始化 与 写入时完全相同的 Embedding模型 和 Chroma 客户端
-ef = SentenceTransformerEmbeddingFunction(model_name = "all-MiniLM-L6-v2")
-client = chromadb.PersistentClient(path="./data/chroma")
-collection = client.get_or_create_collection(name="news", embedding_function=ef)
+ef = SentenceTransformerEmbeddingFunction(model_name = EMBEDDING_MODEL_NAME)
+client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+collection = client.get_or_create_collection(
+    name=CHROMA_COLLECTION_NAME, 
+    embedding_function=ef
+)
 
 def search_news(query:str, top_k: int = 3):
     """

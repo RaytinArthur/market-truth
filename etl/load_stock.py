@@ -1,19 +1,24 @@
 from __future__ import annotations
+
 import os
 from pathlib import Path
 import pandas as pd
 import yfinance as yf
 
-RAW_DIR = Path("data/raw")
-TICKERS = ["AAPL", "TSM"]
-PERIOD = os.getenv("STOCK_PERIOD", "2y")
-ANOMALY_THRESHOLD = 0.03
+from config import (
+    RAW_DATA_DIR, 
+    STOCK_TICKERS, 
+    STOCK_PERIOD, 
+    ANOMALY_THRESHOLD
+)
+
+RAW_DIR = Path(RAW_DATA_DIR)
 
 def get_market_data() -> pd.DataFrame:
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"+++ 正在拉取{TICKERS}的历史行情 (Period: {PERIOD})...")
+    print(f"+++ 正在拉取{STOCK_TICKERS}的历史行情 (Period: {STOCK_PERIOD})...")
     df_raw = yf.download(
-        TICKERS, period=PERIOD, interval="1d",
+        STOCK_TICKERS, period=STOCK_PERIOD, interval="1d",
         group_by="ticker", auto_adjust=True
     )
 
@@ -27,7 +32,7 @@ def get_market_data() -> pd.DataFrame:
     else:
         df = df_raw.reset_index()
         df.columns = [c.lower() for c in df.columns]
-        df["ticker"] = TICKERS[0]
+        df["ticker"] = STOCK_TICKERS[0]
 
     #时间标准化
     df["date"] = pd.to_datetime(df["date"]).dt.date.astype(str)
