@@ -1,0 +1,12 @@
+version: '3.8'
+services:
+  neo4j:
+    image: neo4j:5.12.0
+    container_name: market-truth-neo4j
+    ports:
+      - "7474:7474" # Browser UI
+      - "7687:7687" # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/market_truth_666
+    volumes:
+      - ./data/neo4j/data:/data
