@@ -1,4 +1,4 @@
-import json
+import hashlib, json
 import os
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
@@ -37,8 +37,22 @@ def main():
     
     # 提取数据，写入chromaDB
     documents = [n.get("title", "") for n in news]
-    metadatas = [{"date": n.get("date", ""), "tickers":n.get("tickers", "")} for n in news]
-    ids = [f"news_{i}" for i in range(len(news))]
+    metadatas = [
+        {
+            "date": n.get("date", ""), 
+            "ticker": n.get("ticker", ""),
+            "related_tickers": ",".join(n.get("relatedTickers", [])),
+            "publisher": n.get("publisher", ""),
+            "link": n.get("link", "")
+        } 
+        for n in news
+    ]
+    ids = [
+        hashlib.md5(
+            f"{n.get('date','')}_{n.get('ticker','')}_{n.get('title','')}_{n.get('publisher','')}".encode("utf-8")
+        ).hexdigest()
+    for n in news
+    ]
 
     print(f"正在将{len(news)}条数据 写入ChromaDB")
 
@@ -49,6 +63,16 @@ def main():
         ids = ids
     )
     print("成功将新闻向量化 并写入本地ChromaDB!")
+
+def delete_news():
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    collection_name = CHROMA_COLLECTION_NAME
+    try:
+        client.delete_collection(collection_name)
+        print(f"已删除旧collection : {collection_name}")
+    except Exception as e:
+        print(f"删除失败，错误：{e}")
+
 
 if __name__ == "__main__":
     main()

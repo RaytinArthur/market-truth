@@ -49,11 +49,11 @@ python etl/load_news.py
 python etl/embed_news.py
 ```
 ### 4. 执行归因分析 (Run Analysis)
-使用 Happy Path 测试用例验证系统闭环（以 2024-08-05 巴菲特减持苹果为例） ：```python
-python main.py
+使用 Happy Path 测试用例验证系统闭环（以 2024-08-05 巴菲特减持苹果为例：
 ```
+python main.py
+
 # 指定其他参数运行
-```python
 python main.py --ticker AAPL --date 2024-08-05
 ```
 ## 已知局限性 (Known Limitations)

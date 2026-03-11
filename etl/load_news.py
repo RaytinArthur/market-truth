@@ -33,6 +33,7 @@ def _date_from_any(item: dict) -> str | None:
         try:
             # example: 2026-02-27T19:05:00Z
             # 'Z' -> '+00:00' 才能被 fromisoformat 正确解析
+            # 其实3.12已经可以了 不需要替换Z
             iso2 = iso.replace("Z", "+00:00")
             dt = datetime.fromisoformat(iso2)
             # 保证UTC
@@ -96,7 +97,6 @@ def get_market_news() -> list[dict]:
                 publisher = provider.get("displayName")
             publisher = publisher or content.get("publisher") or item.get("publisher") or item.get("provider")
 
-
             all_news.append(
                 {
                     "date": dt_str,
@@ -110,6 +110,8 @@ def get_market_news() -> list[dict]:
     return all_news
     
 def main():
+    # 这里是覆盖重写，不是增量抓取
+    # TODO 改成增量抓取
     try:
         news_data = get_market_news()
         out_path = RAW_DIR / "news.json"
