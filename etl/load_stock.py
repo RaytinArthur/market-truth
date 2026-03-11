@@ -25,11 +25,13 @@ def get_market_data() -> pd.DataFrame:
     if df_raw.empty:
         raise RuntimeError("yfinance 返回数据为空，请检查网络或者Ticker符号")
     
-    #兼容处理
+    #兼容处理, yf.download() 在 单股票 和 多股票 时返回结构不同
     if isinstance(df_raw.columns, pd.MultiIndex):
+        # 多股票
         df = df_raw.stack(level=0).reset_index()
         df.columns = [c.lower() for c in df.columns]
     else:
+        # 单股票
         df = df_raw.reset_index()
         df.columns = [c.lower() for c in df.columns]
         df["ticker"] = STOCK_TICKERS[0]

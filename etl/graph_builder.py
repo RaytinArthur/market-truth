@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 
@@ -7,12 +8,17 @@ class GraphBuilder:
     def __init__(self, driver, normalizer):
         self.driver = driver
         self.normalizer = normalizer
+    
+    def gen_news_id(self, news_item:dict) -> str:
+        raw = f"{news_item.get('date', '')}|{news_item.get('title', '')}|{news_item.get('publisher', '')}"
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
     def extract_mentions(self, news_item:dict) -> list[str]:
         candidates = []
         if news_item.get("ticker"):
             candidates.append(news_item["ticker"])
         
+        # 下面return的时候 去重了
         if isinstance(news_item.get("relatedTickers"), list):
             candidates.extend(news_item["relatedTickers"])
         
@@ -54,6 +60,7 @@ class GraphBuilder:
         return themes if themes else ["Other"]
     
     def write_news_to_graph(self, news_item: dict) -> None:
+        news_id = self.gen_news_id(news_item)
         tickers = self.extract_mentions(news_item)
         themes = self.classify_themes(news_item)
 
@@ -61,7 +68,9 @@ class GraphBuilder:
         MERGE (n:News {news_id: $news_id})
         SET n.title = $title,
             n.content = $content,
-            n.date = $date
+            n.date = $date,
+            n.publisher = $publisher,
+            n.url = $url
 
         WITH n
         UNWIND $tickers AS ticker
@@ -75,10 +84,12 @@ class GraphBuilder:
         """
 
         params = {
-            "news_id": str(news_item["id"]),
+            "news_id": news_id,
             "title": news_item.get("title", ""),
             "content": news_item.get("content", ""),
             "date": news_item.get("date", ""),
+            "publisher": news_item.get("publisher", ""),
+            "url": news_item.get("link", ""),
             "tickers": tickers,
             "themes": themes,
         }
@@ -91,4 +102,14 @@ class GraphBuilder:
             try:
                 self.write_news_to_graph(item)
             except Exception as e:
-                logging.error("Failed to process news_id=%s:%s", item.get("id"), e)
+                logging.error("Failed to process news: %s", e)
+
+    def ensure_constraints(self) -> None:
+        queries = [
+            "CREATE CONSTRAINT company_ticker_unique IF NOT EXISTS FOR (c:Company) REQUIRE c.ticker IS UNIQUE",
+            "CREATE CONSTRAINT news_id_unique IF NOT EXISTS FOR (n:News) REQUIRE n.news_id IS UNIQUE",
+            "CREATE CONSTRAINT theme_name_unique IF NOT EXISTS FOR (t:Theme) REQUIRE t.name IS UNIQUE",
+        ]
+        with self.driver.session() as session:
+            for q in queries:
+                session.run(q)
