@@ -4,6 +4,8 @@ import re
 
 from tqdm import tqdm
 
+from utils.error_logger import log_error, ErrorType
+
 class GraphBuilder:
     def __init__(self, driver, normalizer):
         self.driver = driver
@@ -35,6 +37,17 @@ class GraphBuilder:
             t = self.normalizer.normalize(c)
             if t:
                 tickers.append(t)
+            else:
+                # --- 新增：实体对齐失败埋点 ---
+                log_error(
+                    error_type=ErrorType.ENTITY_ALIGNMENT_FAILURE,
+                    query=c,             # 记录解析失败的原始字符串
+                    context=title,       # 把新闻标题作为上下文留存，方便溯源
+                    details={
+                        "news_url": news_item.get("link", ""),
+                        "step": "normalizer.normalize"
+                    }
+                )
         
         return sorted(set(tickers))
     

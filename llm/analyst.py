@@ -1,6 +1,9 @@
 import os
+import re
 from openai import OpenAI
 from dotenv import load_dotenv
+
+from utils.error_logger import log_error, ErrorType
 
 #加载 .env 环境变量
 load_dotenv()
@@ -69,6 +72,30 @@ Constraints:
 - Do not write long introductions or summaries.
 """.strip()
 
+def _check_llm_errs(context: str, response_text:str, question: str):
+    """
+    轻量级的后置结果校验，识别幻觉与冲突处理失误
+    """
+    # 1. 检测大模型幻觉 (LLM Hallucination)
+    # 逻辑：如果 Context 极短或为空，但模型却输出了确凿的“直接证据”而没说“无”，极大概率是模型凭借自带权重在脑补。
+    if len(context.strip()) < 50 and not any(safe_word in response_text for safe_word in ["直接证据：无", "直接证据：暂无", "直接证据：缺失"]):
+        log_error(ErrorType.LLM_HALLUCINATION, query=question, context=context, response=response_text)
+        print("[Error Tracker] 触发 LLM_HALLUCINATION: 上下文缺失，但模型强行生成了证据。")
+
+    # 2. 冲突证据处理错误
+    # 逻辑：快速扫描 Context，如果存在明显的反转或矛盾情绪词，但 LLM 的“冲突信号”块输出为空，说明没有按照金融逻辑综合处理。
+    conflict_keywords = ["暴涨", "暴跌", "利好", "利空", "不及预期", "超预期", "但是"]
+    # 如果上下文中命中了2个以上的矛盾关键词，说明存在潜在冲突
+    if sum(1 for k in conflict_keywords if k in context) >= 2:
+        # 正则提取模型生成的冲突点内容
+        conflict_match = re.search(r"## 冲突信号\n- 冲突点：(.*)", response_text)
+        if conflict_match:
+            conflict_content = conflict_match.group(1).strip()
+            # 如果模型写了“无”或者没写出来
+            if not conflict_content or conflict_content in ["无", "None", "暂无", "-"]:
+                log_error(ErrorType.CONFLICT_PROCESSING_ERROR, query=question, context=context, response=response_text)
+                print("[Error Tracker] 触发 CONFLICT_PROCESSING_ERROR: 上下文有冲突信号，模型未能有效识别或分配权重。")
+
 def analyze(context:str, question:str) -> str:
     """
     调用大模型进行归因分析
@@ -96,4 +123,5 @@ def analyze(context:str, question:str) -> str:
         return content + (f"\n\n[debug]"+", ".join(debug_tail) if debug_tail else "")
 
     except Exception as e:
+        log_error(ErrorType.LLM_FAILURE, question=question, context=context, reason=str(e))
         return f"LLM 调用失败，错误信息:{e}"
