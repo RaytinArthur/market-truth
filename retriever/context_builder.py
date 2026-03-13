@@ -261,6 +261,7 @@ def build_hybrid_context(
     date: str,
     vector_results: list[dict] | None = None,
     graph_results: list[dict] | None = None,
+    ablation_mode:str | None = None,
 ) -> str:
     stock_info = get_stock_anomaly(ticker, date)
 
@@ -293,9 +294,14 @@ def build_hybrid_context(
         direct_top_n=3,
         k=20
     )
+
+    model_label = "HYBRID"
+    if ablation_mode == "DROP_DIRECT_NEWS":
+        direct_news = []
+        model_label = "ABLATION_DROP_DIRECT_NEWS"
     
     print(
-        f"[CONTEXT_BUILDER] mode=HYBRID "
+        f"[CONTEXT_BUILDER] mode={model_label} "
         f"vector_hits={len(vector_results)} "
         f"graph_hits={len(graph_results)} "
         f"direct={len(direct_news)} "
@@ -303,13 +309,27 @@ def build_hybrid_context(
         f"themes={len(theme_news)}"
     )
 
+    status_text = "[Status: HYBRID_MODE]"
+    ablation_note = ""
+
+    if ablation_mode == "DROP_DIRECT_NEWS":
+        status_text = "[Status: ABLATION_DROP_DIRECT_NEWS]"
+        ablation_note = (
+            "Note: Direct company-specific news has been intentionally removed "
+            "for ablation testing. Use only indirect supply-chain / related-company "
+            "signals and theme evidence. Lower confidence if evidence is weak.\n"
+        )
+
     context = f"""
-[Status: HYBRID_MODE]
+{status_text}
 
 ## STOCK_MOVEMENT
 ticker: {ticker}
 date: {date}
 {stock_info}
+
+## Experiment Note
+{ablation_note if ablation_note else "None"}
 
 ## Direct News
 """
@@ -341,7 +361,7 @@ title: {news.get("title", "")}
 date: {news.get("date", "")}
 publisher: {news.get("publisher", "")}
 company_ticker: {news.get("company_ticker", "")}
-relation: {news.get("relation_type", "")}
+relation: {news.get("relation", "")}
 path_explanation: {news.get("path_explanation", "")}
 fused_score: {news.get("fused_score", 0):.4f}
 time_bonus: {news.get("time_bonus", 0):.2f}

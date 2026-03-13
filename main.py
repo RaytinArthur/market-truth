@@ -10,15 +10,26 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--ticker", default=DEFAULT_TICKER, help = "股票代码")
     parser.add_argument("--date", default=DEFAULT_DATE, help="目标日期 YYYY-MM-DD")
-    parser.add_argument("--mode", default="hybrid", choices=["week1", "hybrid"])
+    parser.add_argument(
+        "--mode", 
+        default="hybrid", 
+        choices=["week1", "hybrid", "ablation"],
+        help="week1=vector only, hybrid=full hybrid, ablation=drop direct news",
+    )
     args = parser.parse_args()
     
     # 1. 拼接上下文：股价 + 相关新闻
     try:
         if args.mode =="week1":
             context = build_context(args.ticker, args.date)
-        else:
+        elif args.mode == "hybrid":
             context = build_hybrid_context(args.ticker, args.date)
+        else:
+            context = build_hybrid_context(
+                args.ticker,
+                args.date,
+                ablation_mode="DROP_DIRECT_NEWS",                
+            )
     except Exception as e:
         print(f"错误：生成context 失败：{type(e).__name__}: {e}", file=sys.stderr)
         return 10003
