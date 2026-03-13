@@ -183,9 +183,8 @@ def _split_hybrid_sections(
     2. related_news
     3. theme_news
 
-    Strategy:
-    - first fuse all candidates with RRF + time bonus
-    - direct_news: top N fused results
+    More natural strategy:
+    - direct_news: top fused results that are from_vector=True
     - related_news: remaining graph-involved results
     - theme_news: remaining vector-only results
     """
@@ -195,14 +194,31 @@ def _split_hybrid_sections(
         target_date=target_date,
         k = k,
     )
-    direct_news = fused_results[:direct_top_n]
-    remaining = fused_results[direct_top_n:]
+    direct_news = []
+    related_news = []
+    theme_news = []
 
-    related_news = [news for news in remaining if news.get("from_graph")]
-    theme_news = [news for news in remaining if news.get("from_vector") and not news.get("from_graph")]
+    # 1. Direct News: 优先挑from_vector=True的高分新闻
+    for news in fused_results:
+        if news.get("from_vector") and len(direct_news) < direct_top_n:
+            direct_news.append(news)
 
+    direct_keys = {
+        _normalize_news_key(news)
+        for news in direct_news
+    }
+
+    # 2. 其余新闻按语义区分
+    for news in fused_results:
+        key = _normalize_news_key(news)
+        if key in direct_keys:
+            continue
+        if news.get("from_graph"):
+            related_news.append(news)
+        elif news.get("from_vector"):
+            theme_news.append(news)
+    
     return direct_news, related_news, theme_news
-
 
 def build_context(ticker:str, date:str) -> str:
     """
@@ -282,7 +298,7 @@ ticker: {ticker}
 date: {date}
 {stock_info}
 
-## DIRECT_NEWS
+## Direct News
 """
     
     if not direct_news:
@@ -300,7 +316,7 @@ time_bonus: {news.get("time_bonus", 0):.2f}
 vector_rank: {news.get("vector_rank")}
 graph_rank: {news.get("graph_rank")}
 """
-    context += "\n## SUPPLY_CHAIN / RELATED_NEWS\n"
+    context += "\n## Supply Chain / Related Company News\n"
 
     if not related_news:
         context += "No related company news found.\n"
