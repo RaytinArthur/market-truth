@@ -4,7 +4,7 @@ class GraphRetriever:
     def __init__(self, driver):
         self.driver = driver
     
-    def retrieve(self, ticker:str, target_date:str, window: int =3):
+    def retrieve(self, ticker:str, target_date:str, window: int = 7):
         query = """
         MATCH (target:Company {ticker: $ticker})
 

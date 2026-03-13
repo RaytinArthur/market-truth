@@ -1,6 +1,9 @@
 from datetime import datetime
 
-from config import TOP_K_NEWS
+from neo4j import GraphDatabase
+
+from config import TOP_K_NEWS,NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from retriever.graph_retriever import GraphRetriever
 from retriever.stock_retriever import get_stock_anomaly
 from retriever.vector_search import search_news_by_ticker_and_date
 
@@ -102,7 +105,7 @@ def _fuse_hybrid_results (
                 "publisher": news.get("publisher", ""),
                 "link": news.get("link", ""),
                 "company_ticker": news.get("company_ticker", ""),
-                "relation": news.get("relation", ""),
+                "relation": news.get("relation_type", ""),
                 "path_explanation": news.get("path_explanation", ""),
                 "from_vector": False,
                 "from_graph": True,
@@ -117,7 +120,7 @@ def _fuse_hybrid_results (
             if not merged_by_key[key].get("company_ticker"):
                 merged_by_key[key]["company_ticker"] = news.get("company_ticker", "")
             if not merged_by_key[key].get("relation"):
-                merged_by_key[key]["relation"] = news.get("relation", "")
+                merged_by_key[key]["relation"] = news.get("relation_type", "")
             if not merged_by_key[key].get("path_explanation"):
                 merged_by_key[key]["path_explanation"] = news.get("path_explanation", "")
     
@@ -271,7 +274,17 @@ def build_hybrid_context(
         )
 
     if graph_results is None:
-        graph_results = []
+        driver = GraphDatabase.driver(
+        NEO4J_URI,
+        auth = (NEO4J_USER, NEO4J_PASSWORD)
+        )
+
+        retriever = GraphRetriever(driver)
+
+        graph_results  = retriever.retrieve(
+            ticker= ticker,
+            target_date=date
+        )
 
     direct_news, related_news, theme_news = _split_hybrid_sections(
         vector_results=vector_results,
@@ -328,7 +341,7 @@ title: {news.get("title", "")}
 date: {news.get("date", "")}
 publisher: {news.get("publisher", "")}
 company_ticker: {news.get("company_ticker", "")}
-relation: {news.get("relation", "")}
+relation: {news.get("relation_type", "")}
 path_explanation: {news.get("path_explanation", "")}
 fused_score: {news.get("fused_score", 0):.4f}
 time_bonus: {news.get("time_bonus", 0):.2f}
