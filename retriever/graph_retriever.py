@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from utils.error_logger import log_error, ErrorType
+
 class GraphRetriever:
     def __init__(self, driver):
         self.driver = driver
@@ -64,6 +66,17 @@ class GraphRetriever:
                     "path_explanation": path_explanation,
                     "date_distance": date_distance,
                 })
+        if not records:
+            log_error(
+                error_type=ErrorType.GRAPH_EVIDENCE_MISSING,
+                query=f"Retrieve Graph Evidence for {ticker}",
+                details={
+                    "ticker": ticker,
+                    "target_date": target_date,
+                    "window": window,
+                    "reason": "Cypher query returned 0 matched news nodes."
+                }
+            )
         records.sort(key=lambda x:(x["date_distance"], x["company_ticker"]))
             
         return records
