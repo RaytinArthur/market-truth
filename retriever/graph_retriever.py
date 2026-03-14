@@ -1,10 +1,11 @@
 from datetime import datetime
 
+from db.neo4j_client import Neo4jClient
 from utils.error_logger import log_error, ErrorType
 
 class GraphRetriever:
-    def __init__(self, driver):
-        self.driver = driver
+    def __init__(self):
+        self.driver = Neo4jClient().get_driver()
     
     def retrieve(self, ticker:str, target_date:str, window: int = 7):
         query = """
