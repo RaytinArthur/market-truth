@@ -2,10 +2,11 @@ from datetime import datetime
 
 from neo4j import GraphDatabase
 
-from config import TOP_K_NEWS,NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+from config import TOP_K_NEWS
 from retriever.graph_retriever import GraphRetriever
 from retriever.stock_retriever import get_stock_anomaly
-from retriever.vector_search import search_news_by_ticker_and_date
+from retriever.vector_retriever import VectorRetriever
+from utils.latency_tracker import LatencyTracker
 
 def _normalize_news_key(news: dict) -> tuple[str, str]:
     title = (
@@ -229,9 +230,12 @@ def build_context(ticker:str, date:str) -> str:
     Used by existing pipeline.
     """
     stock_info = get_stock_anomaly(ticker,date)
-    
     query = f"{ticker} news {date}"
-    news_list = search_news_by_ticker_and_date(query, ticker=ticker,target_date=date, top_k=int(TOP_K_NEWS))
+
+    retriever = VectorRetriever()
+    news_list = retriever.search_news_by_ticker_and_date(
+        query, ticker=ticker,target_date=date, top_k=int(TOP_K_NEWS)
+    )
 
     context = f"""
 ## STOCK_MOVEMENT
@@ -263,30 +267,30 @@ def build_hybrid_context(
     graph_results: list[dict] | None = None,
     ablation_mode:str | None = None,
 ) -> str:
+    
+    tracker = LatencyTracker()
     stock_info = get_stock_anomaly(ticker, date)
 
     if vector_results is None:
+        tracker.start("vector")
         query = f"{ticker} news {date}"
-        vector_results = search_news_by_ticker_and_date(
+        vector_results = VectorRetriever().search_news_by_ticker_and_date(
             query,
             ticker = ticker,
             target_date=date,
             top_k=int(TOP_K_NEWS)
         )
+        tracker.stop("vector")
 
     if graph_results is None:
-        driver = GraphDatabase.driver(
-        NEO4J_URI,
-        auth = (NEO4J_USER, NEO4J_PASSWORD)
-        )
-
-        retriever = GraphRetriever(driver)
-
-        graph_results  = retriever.retrieve(
+        tracker.start("graph")
+        graph_results  = GraphRetriever().retrieve(
             ticker= ticker,
             target_date=date
         )
+        tracker.stop("graph")
 
+    tracker.start("fusion")
     direct_news, related_news, theme_news = _split_hybrid_sections(
         vector_results=vector_results,
         graph_results=graph_results,
@@ -294,6 +298,7 @@ def build_hybrid_context(
         direct_top_n=3,
         k=20
     )
+    tracker.stop("fusion")
 
     model_label = "HYBRID"
     if ablation_mode == "DROP_DIRECT_NEWS":

@@ -4,6 +4,7 @@ import sys
 from config import DEFAULT_TICKER, DEFAULT_DATE
 from retriever.context_builder import build_context, build_hybrid_context
 from llm.analyst import analyze
+from utils.latency_tracker import LatencyTracker
 
 def main() -> int:
     # 使用argparse 支持命令行传参
@@ -55,6 +56,8 @@ def main() -> int:
     print("=" * 30)
     print(report)
     print("=" * 30)
+
+    LatencyTracker().log_summary()
 
 if __name__ == "__main__":
     raise SystemExit(main())

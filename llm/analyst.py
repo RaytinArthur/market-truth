@@ -4,6 +4,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 from utils.error_logger import log_error, ErrorType
+from utils.latency_tracker import LatencyTracker
 
 #加载 .env 环境变量
 load_dotenv()
@@ -100,7 +101,9 @@ def analyze(context:str, question:str) -> str:
     """
     调用大模型进行归因分析
     """
+    tracker = LatencyTracker()
     try:
+        tracker.start("llm")
         response = client.chat.completions.create(
             model = model_name,
             max_completion_tokens=4096,
@@ -109,10 +112,13 @@ def analyze(context:str, question:str) -> str:
                 {"role": "user", "content": f"上下文：{context}\n 问题：{question}"}
             ]
         )
+        tracker.stop("llm")
+
         content = response.choices[0].message.content or ""
         finish = getattr(response.choices[0], "finish_reason", None)
         usage = getattr(response, "usage", 0)
 
+        _check_llm_errs(context, content, question)
         #TODO 后续Week4 换车日志/可观测
         debug_tail = []
         if finish:
