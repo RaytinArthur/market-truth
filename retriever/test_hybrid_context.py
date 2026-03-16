@@ -1,5 +1,5 @@
 from retriever.context_builder import build_hybrid_context
-from retriever.vector_search import search_news_by_ticker_and_date
+from retriever.vector_retriever import search_news_by_ticker_and_date
 
 
 def main():
