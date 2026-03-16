@@ -3,7 +3,7 @@ import sys
 
 from config import DEFAULT_TICKER, DEFAULT_DATE
 from retriever.context_builder import build_context, build_hybrid_context
-from llm.analyst import analyze
+from agent.analyst import analyze
 from utils.latency_tracker import LatencyTracker
 
 def main() -> int:

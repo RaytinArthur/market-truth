@@ -1,6 +1,6 @@
 import os
 import json
-from llm.analyst import _check_llm_errs
+from agent.analyst import _check_llm_errs
 from utils.error_logger import log_error, ErrorType, ERROR_LOG_FILE
 
 def run_test():
