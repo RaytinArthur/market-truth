@@ -4,12 +4,12 @@
 #   把核心线索（Evidence）压入长时记忆池后，直接调用 RemoveMessage 把那长文本从上下文队列里“精准刺杀”
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage
+from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from agent.state import AgentState, Evidence
 from agent.tools import tools
-from agent.prompts import PLANNER_PROMPT
+from agent.prompts import PLANNER_PROMPT, REPORTER_PROMPT
 
 from config import (
     MODEL_NAME, OPENAI_BASE_URL,OPENAI_API_KEY
@@ -28,8 +28,8 @@ llm = ChatOpenAI(
     model=MODEL_NAME,
     base_url=OPENAI_BASE_URL,
     api_key=OPENAI_API_KEY,
-    temperature=1,
-    max_tokens=2000
+    temperature=0.1,
+    max_tokens=800
 )
 
 planner_llm = llm.bind_tools(tools)
@@ -116,10 +116,10 @@ def safety_node(state: AgentState):
     # 补丁2：精准刺杀，拒绝暴利切片
     delete_targets = []
     # 永远保留最新的一次查询结果（供下一步Planner推理或者Reporter总结使用）
-    safe_tool_ids = {m.id for m in recent_tool_messages}
+    safe_tool_ids = {m.tool_call_id for m in recent_tool_messages}
     
     for msg in messages:
-        if isinstance(msg, ToolMessage) and msg.id not in safe_tool_ids:
+        if isinstance(msg, ToolMessage) and msg.tool_call_id not in safe_tool_ids:
             # 安全计算长度
             content_len = len(msg.content) if isinstance(msg.content, str) else len(str(msg.content))
             # 如果是历史残留的超大json/文本， 精准抹除
@@ -133,3 +133,25 @@ def safety_node(state: AgentState):
         "evidence_pool": evidence_pool,     
         "visited_entities": visited_entities
     }
+
+# 4. 临终遗言节点
+def reporter_node(state: AgentState):
+    """
+    职责：禁用工具，只读evidence_pool,写出拿份极度严谨的SSE流式报告
+    """
+    evidence_pool = state.get("evidence_pool", [])
+
+    # 把 高维的Evidence对象降维成String，喂给大模型
+    if evidence_pool:
+        evidence_text = "\n".join([f"[{e.type.upper()}] 来源：{e.source} | 结论：{e.claim}" for e in evidence_pool])
+    else:
+        evidence_text = "目前没有收集到任何有效证据，请如实输出信息缺口"
+    
+    sys_msg = SystemMessage(content=REPORTER_PROMPT)
+    user_msg = HumanMessage(content=f"请根据以下收集到的线索进行归因总结：\n {evidence_text}")
+
+    # 2. 调用纯净的llm
+    response = llm.invoke([sys_msg, user_msg])
+
+    # 3. 覆盖messages, 确保护航最后一步输出干净的报告
+    return {"messages": [response]}
