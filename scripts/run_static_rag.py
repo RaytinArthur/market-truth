@@ -1,0 +1,63 @@
+import argparse
+import sys
+
+from config import DEFAULT_TICKER, DEFAULT_DATE
+from retriever.context_builder import build_context, build_hybrid_context
+from agent.analyst import analyze
+from utils.latency_tracker import LatencyTracker
+
+def main() -> int:
+    # 使用argparse 支持命令行传参
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ticker", default=DEFAULT_TICKER, help = "股票代码")
+    parser.add_argument("--date", default=DEFAULT_DATE, help="目标日期 YYYY-MM-DD")
+    parser.add_argument(
+        "--mode", 
+        default="hybrid", 
+        choices=["week1", "hybrid", "ablation"],
+        help="week1=vector only, hybrid=full hybrid, ablation=drop direct news",
+    )
+    args = parser.parse_args()
+    
+    # 1. 拼接上下文：股价 + 相关新闻
+    try:
+        if args.mode =="week1":
+            context = build_context(args.ticker, args.date)
+        elif args.mode == "hybrid":
+            context = build_hybrid_context(args.ticker, args.date)
+        else:
+            context = build_hybrid_context(
+                args.ticker,
+                args.date,
+                ablation_mode="DROP_DIRECT_NEWS",                
+            )
+    except Exception as e:
+        print(f"错误：生成context 失败：{type(e).__name__}: {e}", file=sys.stderr)
+        return 10003
+    if not context or not str(context).strip():
+        print(f"错误：未构造出任何上下文（ticker={args.ticker}, date={args.date}）。", file=sys.stderr)
+        return 10004
+
+
+    # 2. 构造LLM的问题
+    question = f"为什么{args.ticker} 在 {args.date}出现股价异动？"
+
+    # 3. 调用LLM 输出分析报告
+    context = context[:8000]
+    try:
+        report = analyze(context, question)
+    except Exception as e:
+        print(f"错误：analyze 失败：{type(e).__name__}: {e}", file=sys.stderr)
+        return 10005
+
+    # 4. 在终端打印结果
+    print("=" * 30)
+    print(f"Market Truth 分析报告: {args.ticker} @ {args.date}")
+    print("=" * 30)
+    print(report)
+    print("=" * 30)
+
+    LatencyTracker().log_summary()
+
+if __name__ == "__main__":
+    raise SystemExit(main())

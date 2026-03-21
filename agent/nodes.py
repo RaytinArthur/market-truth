@@ -48,12 +48,66 @@ def planner_node(state: AgentState):
     filtered_messages = [m for m in messages if not isinstance(m, SystemMessage)]
     # 注入携带当前部署的最新System Prompt
     sys_msg = SystemMessage(content=PLANNER_PROMPT.format(step_count=step_count))
-    input_messages = [sys_msg] + filtered_messages
-
     # 执行推理
-    response = planner_llm.invoke(input_messages)
+    response = planner_llm.invoke([sys_msg] + filtered_messages)
 
     return {"messages": [response]}
+
+# 2.5 自定义执行节点，替代官方ToolNode
+def action_node(state:AgentState):
+    """
+    职责：执行工具调用，游历拦截+API异常兜底
+    """
+    messages = state.get("messages", [])
+    visited_entities = state.get("visited_entities", [])
+
+    last_ai_msg = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, 'tool_calls', None)), None)
+    if not last_ai_msg:
+        return {"messages": []}
+
+    tool_map = {tool.name: tool for tool in tools}
+
+    results = []
+    for tool_call in last_ai_msg.tool_calls:
+        tool_name = tool_call["name"]
+        tool_args = tool_call["args"]
+        tool_call_id = tool_call["id"]
+
+        tool_instance = tool_map.get(tool_name)
+        if not tool_instance:
+            error_msg = f"System Error: Tool '{tool_name}' does not exist. Please use available tools."
+            results.append(ToolMessage(content=error_msg, tool_call_id=tool_call_id, name=tool_name))
+            continue
+
+        # 防线1. 游历拦截（拒绝Graph实体死循环）
+        if tool_name == "graph_search":
+            entity = tool_args.get("ticker") or tool_args.get("symbol") or tool_args.get("entity")
+            if entity:
+                entity_norm = str(entity).strip().upper()
+                if entity_norm in visited_entities:
+                    # 以ToolMessage身份把大模型喷回去，而不是抛异常
+                    msg = f"System Intercept: 实体'{entity_norm}' 已经查询过，发现循环动作。请根据已有线索推理，或更换其他关联实体查询。"
+                    results.append(ToolMessage(content=msg, tool_call_id=tool_call_id, name=tool_name))
+                    continue
+        
+        # 防线2. 异常兜底
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                tool_instance = tool_map[tool_name]
+                # 真实执行底层业务逻辑
+                tool_output = tool_instance.invoke(tool_args)
+                results.append(ToolMessage(content=str(tool_output), tool_call_id=tool_call_id, name=tool_name))
+                break # 成功则跳出重试循环
+
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    # 失败，伪装成 ToolMessage 交还大模型，死守 OpenAI API 铁律
+                    error_msg = f"Tool '{tool_name}' execution failed: {str(e)}. Please adjust your arguments or try another path."
+                    results.append(ToolMessage(content=error_msg, tool_call_id=tool_call_id, name=tool_name))
+                    print(f"[Action Node] 工具 {tool_name} 崩溃已拦截，转交 LLM 兜底。错误: {e}")
+
+    return {"messages": results}
 
 # 3. 安检与上下文裁剪节点 (Memory Assasin)
 def safety_node(state: AgentState):
@@ -66,7 +120,7 @@ def safety_node(state: AgentState):
     step_count = state.get("step_count", 0)
 
     # 预先找到最近的发号施令 AIMessage (用于匹配工具参数)
-    last_ai_msg = next((m for m in reversed(messages) if isinstance(m, AIMessage) and m.tool_calls), None)
+    last_ai_msg = next((m for m in reversed(messages) if isinstance(m, AIMessage) and getattr(m, 'tool_calls', None)), None)
 
     # 1. 倒序处理当前轮次的所有并发 ToolMessage
     recent_tool_messages = []
@@ -84,11 +138,13 @@ def safety_node(state: AgentState):
                 if tc["id"] == tool_msg.tool_call_id and tc["name"] == "graph_search":
                     args = tc.get("args", {})
                     entity = args.get("ticker") or args.get("symbol") or args.get("entity")
-                    if entity and entity not in visited_entities:
-                        visited_entities.append(entity)
+                    if entity:
+                        entity_norm = str(entity).strip().upper()
+                        if entity_norm not in visited_entities:
+                            visited_entities.append(entity_norm)
         
         # 阈值过滤与小模型极简提炼
-        if "Error" not in content_str and len(content_str) > 800:
+        if "System Intercept" not in content_str and "Error" not in content_str and len(content_str) > 800:
             prompt = f"""
             Extract up to TWO short financial evidence statements from this tool output.
             Rules:

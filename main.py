@@ -1,63 +1,99 @@
-import argparse
-import sys
+import asyncio
+import json
+import uuid
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from langchain_core.messages import HumanMessage, AIMessage
 
-from config import DEFAULT_TICKER, DEFAULT_DATE
-from retriever.context_builder import build_context, build_hybrid_context
-from agent.analyst import analyze
-from utils.latency_tracker import LatencyTracker
+from agent.graph import app as agent_app
 
-def main() -> int:
-    # 使用argparse 支持命令行传参
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ticker", default=DEFAULT_TICKER, help = "股票代码")
-    parser.add_argument("--date", default=DEFAULT_DATE, help="目标日期 YYYY-MM-DD")
-    parser.add_argument(
-        "--mode", 
-        default="hybrid", 
-        choices=["week1", "hybrid", "ablation"],
-        help="week1=vector only, hybrid=full hybrid, ablation=drop direct news",
+app = FastAPI(title="MarketTruth Agent API")
+
+class AttributionRequest(BaseModel):
+    ticker: str
+    target_date: str
+
+async def generate_sse_stream(request: Request, ticker:str, target_date:str):
+    """
+    核心流式生成器：监听Agent运行时的所有细粒度事件，并包装为SSE格式
+    """
+    req_id = str(uuid.uuid4())
+    # 1. 构造初始State
+    initial_state = {
+        "messages": [
+            HumanMessage(content=f"请调查{ticker}在{target_date}的股价异动原因")
+        ],
+        "step_count": 0,
+        "evidence_pool": [],
+        "visited_entities": [],
+        "request_id": req_id
+    }
+
+    try:
+        # 2.调用 astream_events (v2时目前LangChain推荐的事件流版本)
+        async for event in agent_app.astream_events(initial_state, version="v2"):
+            if await request.is_disconneted():
+                print(f"[SSE] Client disconnected for request{req_id}. Terminating stream.")
+                break
+
+            kind = event["event"]
+            # 获取当前事件发生在哪个节点
+            node_name = event.get("metadata", {}).get("langgraph_node", "")
+
+            # 补丁：拦截 Planner 的决定，精准推送工具调用状态
+            # 替代 on_tool_start，因为我们覆写了 action_node 且没传 config
+            if kind == "on_chat_model_end" and node_name == "planner":
+                output_msg = event.get("data", {}).get("output", {})
+                if isinstance(output_msg, AIMessage) and output_msg.tool_calls:
+                    for tc in output_msg.tool_calls:
+                        msg = json.dumps({
+                            "type": "thought",
+                            "content": f"🔍 正在调用工具 [{tc['name']}] 进行探勘... 参数: {tc['args']}"
+                        }, ensure_ascii=False)
+                        yield f"data: {msg}\n\n"
+
+            
+            # 场景B:捕获Reporter节点的LLM流式输出(打字机效果)
+            # 必须过滤 node_name == "reporter", 否则思考时隐藏token会漏出
+            elif kind == "on_chat_model_stream" and node_name =="reporter":
+                chunk = event["data"]["chunk"]
+                if chunk.content:
+                    #兼容部分大模型返回的内容不是字符串
+                    content_str = chunk.content if isinstance(chunk.content, str) else str(chunk.content)
+                    msg = json.dumps({"type": "token","content": content_str},ensure_ascii=False)
+                    yield f"data: {msg}\n\n"
+            
+            elif kind == "on_chain_end" and event["name"] == "LangGraph":
+                msg = json.dumps({"type": "done", "content": "\n\n 分析结束。"}, ensure_ascii=False)
+                yield f"data: {msg}\n\n"
+            
+            # 插入隐形心跳，防止 Nginx / 浏览器 掐断长连接
+            yield ": keep-alive\n\n"
+    except Exception as e:
+        error_msg = json.dumps({
+            "type": "error",
+            "content": f"\n\n❌ 系统执行异常: {str(e)}"
+        }, ensure_ascii=False)
+        yield f"data: {error_msg}\n\n"
+        print(f"[SSE Error] Request {req_id} failed: {e}")
+
+@app.post("/api/v1/analyze")
+async def analyze_stock_anomaly(payload: AttributionRequest, request: Request):
+    """
+    对外暴露的SSE流式接口
+    """
+    return StreamingResponse(
+        generate_sse_stream(request, payload.ticker, payload.target_date),
+        media_type="text/event-stream",
+        headers = {
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no" # 极其关键：防止 Nginx 缓存流式响应
+        }
     )
-    args = parser.parse_args()
-    
-    # 1. 拼接上下文：股价 + 相关新闻
-    try:
-        if args.mode =="week1":
-            context = build_context(args.ticker, args.date)
-        elif args.mode == "hybrid":
-            context = build_hybrid_context(args.ticker, args.date)
-        else:
-            context = build_hybrid_context(
-                args.ticker,
-                args.date,
-                ablation_mode="DROP_DIRECT_NEWS",                
-            )
-    except Exception as e:
-        print(f"错误：生成context 失败：{type(e).__name__}: {e}", file=sys.stderr)
-        return 10003
-    if not context or not str(context).strip():
-        print(f"错误：未构造出任何上下文（ticker={args.ticker}, date={args.date}）。", file=sys.stderr)
-        return 10004
-
-
-    # 2. 构造LLM的问题
-    question = f"为什么{args.ticker} 在 {args.date}出现股价异动？"
-
-    # 3. 调用LLM 输出分析报告
-    context = context[:8000]
-    try:
-        report = analyze(context, question)
-    except Exception as e:
-        print(f"错误：analyze 失败：{type(e).__name__}: {e}", file=sys.stderr)
-        return 10005
-
-    # 4. 在终端打印结果
-    print("=" * 30)
-    print(f"Market Truth 分析报告: {args.ticker} @ {args.date}")
-    print("=" * 30)
-    print(report)
-    print("=" * 30)
-
-    LatencyTracker().log_summary()
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    print(" 启动 Market Truth Agent 服务...")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,10 +1,10 @@
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode
+# from langgraph.prebuilt import ToolNode
 from langchain_core.messages import AIMessage
 
 from agent.state import AgentState
 from agent.tools import tools
-from agent.nodes import planner_node, safety_node, reporter_node
+from agent.nodes import planner_node, action_node, safety_node, reporter_node
 
 def should_continue(state: AgentState):
     """
@@ -45,7 +45,7 @@ workflow = StateGraph(AgentState)
 
 # 注册节点
 workflow.add_node("planner", planner_node)
-workflow.add_node("action", ToolNode(tools))
+workflow.add_node("action", action_node)
 workflow.add_node("safety", safety_node)
 workflow.add_node("reporter", reporter_node)
 
