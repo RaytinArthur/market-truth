@@ -40,6 +40,7 @@ STOCK_PERIOD = os.getenv("STOCK_PERIOD", "2y")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME", "gpt-5-mini")
+SMALL_MODEL_NAME = os.getenv("SMALL_MODEL_NAME", "gpt-5-mini")
 
 # ---------- Neo4j ----------
 NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
