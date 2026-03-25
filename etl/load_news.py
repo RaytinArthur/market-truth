@@ -121,7 +121,7 @@ def main():
         print(f"\n ok 成功抓取并去重，共{len(news_data)}条新闻")
         if news_data:
             s = news_data[0]
-            print(f"采样数据：[{s['date']}] {s['ticker']} == {(s['title']) or  ""[:25]}...")
+            print(f"采样数据：[{s['date']}] {s['ticker']} == {(s['title'] or  "")[:25]}...")
 
     except Exception as e:
         print(f"load_news ETL运行失败: {e}")
