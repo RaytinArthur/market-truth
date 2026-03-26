@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 from config import EMBEDDING_MODEL_NAME, CHROMA_COLLECTION_NAME
@@ -79,58 +79,63 @@ class VectorRetriever:
             target_date: str,
             top_k: int = 3,
             candidate_num : int = 8,
-            max_days_diff: int = 10,
+            max_days_before: int = 30,
     ) -> list[dict]:
         """
-        先按 ticker + query 召回候选新闻，再按目标日期重排。
-        - candidate_k: 先从 Chroma 召回多少条候选
-        - max_days_diff: 只保留和目标日期相差不超过多少天的新闻
+        避免 look-ahead bias
+        只查询 target_date 及之前 max_days_before 天内的新闻，再按距离重排
         """
+        target = self._safe_parse_date(target_date)
+        # 如果目标日期解析失败，降级为纯 ticker 检索兜底
+        if target is None:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=top_k,
+                where={"ticker": ticker},
+            )
+            return self._format_results(results)
+
+        # 计算安全的时间窗口：[target - 30天, target]
+        start_date = target - timedelta(days=max_days_before)
+        start_str = start_date.strftime("%Y-%m-%d")
+        end_str = target.strftime("%Y-%m-%d")
+
+        # ChromaDB 魔法：元数据下推过滤 (Pre-filtering)
+        # 彻底解决 Python 内存里的“漏斗截断”问题
         results = self.collection.query(
             query_texts=[query],
             n_results=candidate_num,
-            where={"ticker": ticker},
+            where={
+                "$and": [
+                    {"ticker": {"$eq": ticker}},
+                    {"date": {"$gte": start_str}}, 
+                    {"date": {"$lte": end_str}}
+                ]
+            }
         )
+
         news_list = self._format_results(results)
 
-        target = self._safe_parse_date(target_date)
-        if target is None:
-            return news_list[:top_k]
-
-        filtered = []
+        # 此时查出来的结果一定在时间窗口内，且绝对没有“未来数据”
+        # 我们只需要计算时间差，并做个精细排序即可
         for news in news_list:
             news_date = self._safe_parse_date(news.get("date", ""))
-            if news_date is None:
-                continue
+            if news_date:
+                news["date_distance"] = abs((target - news_date).days)
+            else:
+                news["date_distance"] = float('inf')
 
-            date_distance = abs((news_date - target).days)
-            news["date_distance"] = date_distance
-
-            # 先做一个硬过滤，去掉离得太远的新闻
-            if date_distance <= max_days_diff:
-                filtered.append(news)
-
-        # 如果过滤后一个都没剩，就退回原始候选，但仍按日期距离排
-        if not filtered:
-            for news in news_list:
-                news_date = self._safe_parse_date(news.get("date", ""))
-                if news_date is None:
-                    news["date_distance"] = 999999
-                else:
-                    news["date_distance"] = abs((news_date - target).days)
-            filtered = news_list
-
-        # 排序策略：
+# 排序策略：
         # 1. 日期更近优先
         # 2. 语义距离更小优先（distance 越小越相似）
-        filtered.sort(
+        news_list.sort(
             key=lambda x: (
-                x.get("date_distance", 999999),
-                x.get("distance", 999999) if x.get("distance") is not None else 999999,
+                x.get("date_distance", float('inf')),
+                x.get("distance", float('inf')) if x.get("distance") is not None else float('inf'),
             )
         )
 
-        return filtered[:top_k]
+        return news_list[:top_k]
 
 if __name__ == "__main__":
     print("开始验证语义搜索")
