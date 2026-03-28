@@ -125,7 +125,7 @@ class VectorRetriever:
             else:
                 news["date_distance"] = float('inf')
 
-# 排序策略：
+        # 排序策略：
         # 1. 日期更近优先
         # 2. 语义距离更小优先（distance 越小越相似）
         news_list.sort(

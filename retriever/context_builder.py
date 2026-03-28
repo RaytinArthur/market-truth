@@ -4,7 +4,7 @@ from neo4j import GraphDatabase
 
 from config import TOP_K_NEWS
 from retriever.graph_retriever import GraphRetriever
-from retriever.stock_retriever import get_stock_anomaly
+from retriever.stock_retriever import get_stock_anomaly_by_date
 from retriever.vector_retriever import VectorRetriever
 from utils.latency_tracker import LatencyTracker
 
@@ -229,7 +229,7 @@ def build_context(ticker:str, date:str) -> str:
     Legacy context builder (vector-only).
     Used by existing pipeline.
     """
-    stock_info = get_stock_anomaly(ticker,date)
+    stock_info = get_stock_anomaly_by_date(ticker,date)
     query = f"{ticker} news {date}"
 
     retriever = VectorRetriever()
@@ -269,7 +269,7 @@ def build_hybrid_context(
 ) -> str:
     
     tracker = LatencyTracker()
-    stock_info = get_stock_anomaly(ticker, date)
+    stock_info = get_stock_anomaly_by_date(ticker, date)
 
     if vector_results is None:
         tracker.start("vector")
