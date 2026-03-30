@@ -1,6 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+import contextvars
 from datetime import datetime
-
-from neo4j import GraphDatabase
 
 from config import TOP_K_NEWS
 from retriever.graph_retriever import GraphRetriever
@@ -8,6 +8,7 @@ from retriever.stock_retriever import get_stock_anomaly_by_date
 from retriever.vector_retriever import VectorRetriever
 from utils.latency_tracker import LatencyTracker
 
+# 返回新闻的 标题+日期 tuple
 def _normalize_news_key(news: dict) -> tuple[str, str]:
     title = (
         news.get("title")
@@ -21,6 +22,7 @@ def _normalize_news_key(news: dict) -> tuple[str, str]:
     ).strip().lower()
     return title, date
 
+# 计算时间bonus，相差日期越小， bonus越大
 def _compute_time_bonus(news_date: str, target_date:str) -> float:
     """
     Time bonus should stay much smaller than the RRF main body
@@ -44,13 +46,13 @@ def _compute_time_bonus(news_date: str, target_date:str) -> float:
         return 0.002
     return 0.0
 
+# 返回 vector 和 graph分别的结果
+# 每个结果，都是{[新闻]:排名, [新闻]:排名...}
 def _build_rank_maps(
-    vector_results: list[dict],
-    graph_results: list[dict],
+    deduped_vector: list[dict],
+    deduped_graph: list[dict],
 ) -> tuple[dict[tuple[str,str], int], dict[tuple[str, str], int]]:
-    deduped_vector = _dedup_news(vector_results, title_key="title", date_key="date")
-    deduped_graph = _dedup_news(graph_results, title_key="news_title", date_key="news_date")
-    
+
     vector_rank_map = {
         _normalize_news_key(news): rank
         for rank, news in enumerate(deduped_vector, start = 1)
@@ -70,13 +72,13 @@ def _fuse_hybrid_results (
     k:int = 20,
 ) -> list[dict]:
     """
-    Fuse vector + graph canddts with 
+    Fuse vector + graph candidts with 
     score = RRF(vector+graph) + time_bonus
     """
     deduped_vector = _dedup_news(vector_results, title_key="title", date_key="date")
     deduped_graph = _dedup_news(graph_results, title_key="news_title", date_key="news_date")
 
-    vector_rank_map, graph_rank_map = _build_rank_maps(vector_results, graph_results)
+    vector_rank_map, graph_rank_map = _build_rank_maps(deduped_vector, deduped_graph)
 
     merged_by_key: dict[tuple[str, str], dict] = {}
 
@@ -131,10 +133,9 @@ def _fuse_hybrid_results (
         score = 0.0
 
         if key in vector_rank_map:
-            score += 1 / (k + vector_rank_map[key])
-        
+            score += 1.0 / (k + vector_rank_map[key])
         if key in graph_rank_map:
-            score += 1/ (k+ graph_rank_map[key])
+            score += 1.0 / (k+ graph_rank_map[key])
         
         time_bonus = _compute_time_bonus(item["date"], target_date)
         score += time_bonus
@@ -146,7 +147,7 @@ def _fuse_hybrid_results (
 
         fused_results.append(item)
 
-    fused_results.sort(key=lambda x: x["fused_score"], reverse=True)
+    fused_results.sort(key=lambda x: x.get("fused_score", 0.0), reverse=True)
     return fused_results
 
 def _dedup_news(
@@ -271,32 +272,39 @@ def build_hybrid_context(
     tracker = LatencyTracker()
     stock_info = get_stock_anomaly_by_date(ticker, date)
 
-    if vector_results is None:
+    # 并发获取 Vector 和 Graph 数据
+    def fetch_vector():
+        if vector_results is not None:
+            return vector_results
         tracker.start("vector")
         query = f"{ticker} news {date}"
-        vector_results = VectorRetriever().search_news_by_ticker_and_date(
-            query,
-            ticker = ticker,
-            target_date=date,
-            top_k=int(TOP_K_NEWS)
+        res = VectorRetriever().search_news_by_ticker_and_date(
+            query, ticker=ticker, target_date=date, top_k=int(TOP_K_NEWS)
         )
         tracker.stop("vector")
-
-    if graph_results is None:
+        return res
+    
+    def fetch_graph():
+        if graph_results is not None:
+            return graph_results
         tracker.start("graph")
-        graph_results  = GraphRetriever().retrieve(
-            ticker= ticker,
-            target_date=date
-        )
+        res  = GraphRetriever().retrieve(ticker=ticker,target_date=date)
         tracker.stop("graph")
+        return res
+    
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # 拷贝当前主线程的上下文
+        # 用 ctx.run 包裹你的方法，把上下文“强行注入”给子线程
+        f_vector = executor.submit(contextvars.copy_context().run, fetch_vector)
+        f_graph = executor.submit(contextvars.copy_context().run, fetch_graph)
+
+        vector_results = f_vector.result()
+        graph_results = f_graph.result()
 
     tracker.start("fusion")
     direct_news, related_news, theme_news = _split_hybrid_sections(
-        vector_results=vector_results,
-        graph_results=graph_results,
-        target_date=date,
-        direct_top_n=3,
-        k=20
+        vector_results=vector_results, graph_results=graph_results,
+        target_date=date,  direct_top_n=3,  k=20
     )
     tracker.stop("fusion")
 
@@ -325,70 +333,63 @@ def build_hybrid_context(
             "signals and theme evidence. Lower confidence if evidence is weak.\n"
         )
 
-    context = f"""
-{status_text}
 
-## STOCK_MOVEMENT
-ticker: {ticker}
-date: {date}
-{stock_info}
+    context_lines = []
+    context_lines.append(f"{status_text}\n")
+    context_lines.append(f"## STOCK_MOVEMENT\nticker: {ticker}\ndate: {date}\n{stock_info}\n")
+    context_lines.append(f"## Experiment Note\n{ablation_note if ablation_note else 'None'}\n")
 
-## Experiment Note
-{ablation_note if ablation_note else "None"}
-
-## Direct News
-"""
-    
+    context_lines.append("## Direct News\n")
     if not direct_news:
-        context += "No direct news found.\n"
-
-    for i, news in enumerate(direct_news, 1):
-        context += f"""
-[{i}]
-title: {news.get("title", "")}
-date: {news.get("date", "")}
-publisher: {news.get("publisher", "")}
-link: {news.get("link", "")}
-fused_score: {news.get("fused_score", 0):.4f}
-time_bonus: {news.get("time_bonus", 0):.2f}
-vector_rank: {news.get("vector_rank")}
-graph_rank: {news.get("graph_rank")}
-"""
-    context += "\n## Supply Chain / Related Company News\n"
-
+        context_lines.append("No direct news found.\n")
+    else:
+        for i, news in enumerate(direct_news, 1):
+            context_lines.append(
+                f"[{i}]\n"
+                f"title: {news.get('title', '')}\n"
+                f"date: {news.get('date', '')}\n"
+                f"publisher: {news.get('publisher', '')}\n"
+                f"link: {news.get('link', '')}\n"
+                f"fused_score: {news.get('fused_score', 0):.4f}\n"
+                f"time_bonus: {news.get('time_bonus', 0):.2f}\n"
+                f"vector_rank: {news.get('vector_rank')}\n"
+                f"graph_rank: {news.get('graph_rank')}\n"
+            )
+    
+    context_lines.append("## Supply Chain / Related Company News\n")
     if not related_news:
-        context += "No related company news found.\n"
+        context_lines.append("No related company news found.\n")
+    else:
+        for i, news in enumerate(related_news, 1):
+            context_lines.append(
+                f"[{i}]\n"
+                f"title: {news.get('title', '')}\n"
+                f"date: {news.get('date', '')}\n"
+                f"publisher: {news.get('publisher', '')}\n"
+                f"company_ticker: {news.get('company_ticker', '')}\n"
+                f"relation: {news.get('relation', '')}\n"
+                f"path_explanation: {news.get('path_explanation', '')}\n"
+                f"fused_score: {news.get('fused_score', 0):.4f}\n"
+                f"time_bonus: {news.get('time_bonus', 0):.2f}\n"
+                f"vector_rank: {news.get('vector_rank')}\n"
+                f"graph_rank: {news.get('graph_rank')}\n"
+            )
 
-    for i, news in enumerate(related_news, 1):
-        context += f"""
-[{i}]
-title: {news.get("title", "")}
-date: {news.get("date", "")}
-publisher: {news.get("publisher", "")}
-company_ticker: {news.get("company_ticker", "")}
-relation: {news.get("relation", "")}
-path_explanation: {news.get("path_explanation", "")}
-fused_score: {news.get("fused_score", 0):.4f}
-time_bonus: {news.get("time_bonus", 0):.2f}
-vector_rank: {news.get("vector_rank")}
-graph_rank: {news.get("graph_rank")}
-"""
-    context += "\n## Themes / Risk Signals\n"
-
+    context_lines.append("## Themes / Risk Signals\n")
     if not theme_news:
-        context += "No additional theme/risk news found.\n"
+        context_lines.append("No additional theme/risk news found.\n")
+    else:
+        for i, news in enumerate(theme_news, 1):
+            context_lines.append(
+                f"[{i}]\n"
+                f"title: {news.get('title', '')}\n"
+                f"date: {news.get('date', '')}\n"
+                f"publisher: {news.get('publisher', '')}\n"
+                f"link: {news.get('link', '')}\n"
+                f"fused_score: {news.get('fused_score', 0):.4f}\n"
+                f"time_bonus: {news.get('time_bonus', 0):.2f}\n"
+                f"vector_rank: {news.get('vector_rank')}\n"
+                f"graph_rank: {news.get('graph_rank')}\n"
+            )
 
-    for i, news in enumerate(theme_news, 1):
-        context += f"""
-[{i}]
-title: {news.get("title", "")}
-date: {news.get("date", "")}
-publisher: {news.get("publisher", "")}
-link: {news.get("link", "")}
-fused_score: {news.get("fused_score", 0):.4f}
-time_bonus: {news.get("time_bonus", 0):.2f}
-vector_rank: {news.get("vector_rank")}
-graph_rank: {news.get("graph_rank")}
-"""
-
-    return context
+    return "\n".join(context_lines)
