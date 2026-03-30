@@ -1,6 +1,6 @@
 import pandas as pd
 
-def get_stock_anomaly(ticker:str, target_date:str) -> str:
+def get_stock_anomaly_by_date(ticker:str, target_date:str) -> str:
     """
     输入ticker,date；  输出一段股价描述
     """

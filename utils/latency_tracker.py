@@ -1,27 +1,34 @@
 import time
+from contextvars import ContextVar
+
+# 核心：天生为异步和并发设计的上下文隔离容器
+_latency_ctx: ContextVar[dict] = ContextVar("latency_ctx")
 
 class LatencyTracker:
-    # 核心黑科技：在类级别定义一个绝对共享的字典
-    _shared_state = {
-        "metrics": {},
-        "_start_times": {}
-    }
+    @classmethod
+    def initialize(cls):
+        """在请求的最外层（如 FastAPI Middleware, 或 main 函数最开始）调用一次"""
+        _latency_ctx.set({"metrics": {}, "starts": {}})
 
-    def __init__(self):
-        # 让所有实例的内部变量强制指向同一个字典
-        self.__dict__ = self._shared_state
+    @classmethod
+    def start(cls, step_name: str):
+        ctx = _latency_ctx.get(None)
+        if ctx is not None:
+            ctx["starts"][step_name] = time.perf_counter()
 
-    def start(self, step_name: str):
-        self._start_times[step_name] = time.perf_counter()
+    @classmethod
+    def stop(cls, step_name: str):
+        ctx = _latency_ctx.get(None)
+        if ctx is not None and step_name in ctx["starts"]:
+            elapsed = (time.perf_counter() - ctx["starts"][step_name]) * 1000
+            ctx["metrics"][step_name] = round(elapsed, 2)
 
-    def stop(self, step_name: str):
-        if step_name in self._start_times:
-            elapsed = (time.perf_counter() - self._start_times[step_name]) * 1000
-            self.metrics[step_name] = round(elapsed, 2)
-
-    def log_summary(self):
+    @classmethod
+    def log_summary(cls):
+        ctx = _latency_ctx.get(None)
+        if not ctx:
+            return
         print("\n[Latency]")
         for step in ["vector", "graph", "fusion", "llm"]:
-            val = self.metrics.get(step, "N/A")
+            val = ctx["metrics"].get(step, "N/A")
             print(f"{step}: {val} ms" if val != "N/A" else f"{step}: N/A")
-            

@@ -6,6 +6,8 @@ from retriever.context_builder import build_context, build_hybrid_context
 from agent.analyst import analyze
 from utils.latency_tracker import LatencyTracker
 
+LatencyTracker.initialize()
+
 def main() -> int:
     # 使用argparse 支持命令行传参
     parser = argparse.ArgumentParser()
