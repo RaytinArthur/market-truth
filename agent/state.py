@@ -1,5 +1,5 @@
 # 定义 图状态机 与 证据池 数据结构
-
+import operator
 from typing import Annotated, Literal, List
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
@@ -21,11 +21,11 @@ class AgentState(TypedDict):
     # 使用官方的add_messages reducer, 支持追加与后续的RemoveMessage无损裁剪
     messages: Annotated[list[AnyMessage], add_messages]
 
+    # 告诉 LangGraph：每次 return 这两个字段时，做 list extend，而不是全量覆盖
     # 游历记录, 精准拦截 Graph 查询中的同义词死循环
-    visited_entities: List[str]
-
+    visited_entities: Annotated[list[str], operator.add]
     # 核心资产：提纯后的证据池。 触发Early Stop的唯一凭证
-    evidence_pool: List[Evidence]
+    evidence_pool: Annotated[list[Evidence], operator.add]
 
     # 物理硬刹车计数器，防止把 Token 烧干
     step_count: int
