@@ -1,0 +1,20 @@
+# Core Agent & LLM
+langgraph
+langchain-openai
+langchain-core
+openai
+pydantic
+
+# Vector & Graph Database
+chromadb
+neo4j
+sentence-transformers
+
+# Data & Finance
+pandas
+yfinance
+
+# API & Environment
+fastapi
+uvicorn
+python-dotenv
