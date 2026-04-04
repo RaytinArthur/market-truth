@@ -85,17 +85,40 @@ def _check_llm_errs(context: str, response_text:str, question: str):
 
     # 2. 冲突证据处理错误
     # 逻辑：快速扫描 Context，如果存在明显的反转或矛盾情绪词，但 LLM 的“冲突信号”块输出为空，说明没有按照金融逻辑综合处理。
-    conflict_keywords = ["暴涨", "暴跌", "利好", "利空", "不及预期", "超预期", "但是"]
-    # 如果上下文中命中了2个以上的矛盾关键词，说明存在潜在冲突
-    if sum(1 for k in conflict_keywords if k in context) >= 2:
-        # 正则提取模型生成的冲突点内容
+    if _has_logical_conflict(context):
+        # 正则提取模型生成的冲突点内容 (注意：这里依然建议你未来换成 Pydantic 结构化输出)
         conflict_match = re.search(r"## 冲突信号\n- 冲突点：(.*)", response_text)
         if conflict_match:
             conflict_content = conflict_match.group(1).strip()
-            # 如果模型写了“无”或者没写出来
+            # 如果判定原文有冲突，但模型写了“无”或者没提取出来
             if not conflict_content or conflict_content in ["无", "None", "暂无", "-"]:
                 log_error(ErrorType.CONFLICT_PROCESSING_ERROR, query=question, context=context, response=response_text)
-                print("[Error Tracker] 触发 CONFLICT_PROCESSING_ERROR: 上下文有冲突信号，模型未能有效识别或分配权重。")
+                print("[Error Tracker] 触发 CONFLICT_PROCESSING_ERROR: 上下文存在极性碰撞或转折，模型未能有效识别。")
+
+def _has_logical_conflict(context:str) -> bool:
+    """
+    轻量级文本冲突检测算法
+    判断上下文中是否存在相反的金融情绪信号或强转折逻辑。
+    """
+    if not context:
+        return False
+    
+    # 1. 定义词典：按极性和逻辑功能分组
+    pos_words = {"暴涨", "利好", "超预期", "净利大增", "看涨", "估值修复"}
+    neg_words = {"暴跌", "利空", "不及预期", "爆雷", "看跌", "减持"}
+    turnaround_words = {"但是", "然而", "尽管如此", "反之", "不过"}
+
+    # 2. 优先检测“强转折”
+    # 金融新闻中，出现转折词往往意味着风险或逻辑反转（例如：“营收超预期，但指引疲软”）
+    # 一旦找到第一个匹配项立刻停止，性能开销低
+    if any(w in context for w in turnaround_words):
+        return True
+
+    # 3. 极性碰撞检测
+    has_pos = any(w in context for w in pos_words)
+    has_neg = any(w in context for w in neg_words)
+    # 只有“既有利好，又有利空”同时存在时，才判定为存在冲突
+    return has_pos and has_neg    
 
 def analyze(context:str, question:str) -> str:
     """

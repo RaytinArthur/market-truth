@@ -10,7 +10,7 @@ class Neo4jClient:
         return cls._instance
     
     def __init__(self):
-        # 防抖：确保 driver 只被创建一次
+        # 确保 driver 只被创建一次
         if not hasattr(self, 'driver'):
             self.driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
